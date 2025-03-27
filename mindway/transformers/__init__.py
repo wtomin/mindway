@@ -115,3 +115,4 @@ from .models.umt5 import (
 )
 from .models.xlm_roberta import XLMRobertaModel, XLMRobertaPreTrainedModel
 from .processing_utils import ProcessorMixin
+from .models.cohere import CohereModel, CoherePreTrainedModel, CohereForCausalLM
