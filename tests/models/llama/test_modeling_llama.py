@@ -67,6 +67,9 @@ class LlamaModelTester:
 
         config = self.get_config()
 
+        # set _attn_implementationa
+        config._attn_implementation = "eager"
+
         return config, input_ids, input_mask
 
     def get_config(self):
