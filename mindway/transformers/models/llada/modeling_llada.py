@@ -27,10 +27,10 @@ import mindspore.nn as nn
 import mindspore.ops as ops
 from mindspore import Tensor, Parameter, mint
 from mindspore.common.initializer import initializer, Normal, Constant, TruncatedNormal, HeNormal
-from transformers import PreTrainedModel
-from transformers.modeling_outputs import CausalLMOutputWithPast
-from transformers.models.auto import AutoModel
-from transformers.cache_utils import Cache
+from mindway.transformers import MSPreTrainedModel
+from mindway.transformers.modeling_outputs import CausalLMOutputWithPast
+from mindway.transformers.models.auto import AutoModel
+from mindway.transformers.cache_utils import Cache
 
 from .configuration_llada import (
     LLaDAConfig,
@@ -1336,7 +1336,7 @@ def create_model_config_from_pretrained_config(config: LLaDAConfig):
     return model_config
 
 
-class LLaDAModelLM(PreTrainedModel):
+class LLaDAModelLM(MSPreTrainedModel):
     """
     Extremely barebones HF model wrapper.
     """
