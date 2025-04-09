@@ -18,38 +18,36 @@ def run_codellama_generate(args):
     s_time = time.time()
 
     tokenizer = CodeLlamaTokenizer.from_pretrained(args.model_path)
-    model = LlamaForCausalLM.from_pretrained(args.model_path, use_flash_attention_2=args.use_fa)
-
-    model = auto_mixed_precision(model, amp_level="O2", dtype=ms.float16)
+    model = LlamaForCausalLM.from_pretrained(args.model_path, use_flash_attention_2=args.use_fa, mindspore_dtype=ms.float16)
+    # model = auto_mixed_precision(model, amp_level="O2", dtype=ms.float16)
 
     print("=====> Building model done.")
 
-    while True:
-        PROMPT = '''def remove_non_ascii(s: str) -> str:
-                    """ <FILL_ME>
-                    return result
-                '''
+    PROMPT = '''def remove_non_ascii(s: str) -> str:
+    """ <FILL_ME>
+    return result
+'''
 
-        prompt = [
-            PROMPT,
-        ]
-        input_ids = ms.Tensor(tokenizer(prompt, return_tensors="np").input_ids, ms.int32)
+    prompt = [
+        PROMPT,
+    ]
+    input_ids = ms.Tensor(tokenizer(prompt, return_tensors="np").input_ids, ms.int32)
 
-        input_kwargs = {}
-        if args.use_embed_input:
-            input_kwargs["inputs_embeds"] = model.get_input_embeddings()(input_ids)
-        else:
-            input_kwargs["input_ids"] = input_ids
+    input_kwargs = {}
+    if args.use_embed_input:
+        input_kwargs["inputs_embeds"] = model.get_input_embeddings()(input_ids)
+    else:
+        input_kwargs["input_ids"] = input_ids
 
-        generated_ids = model.generate(**input_kwargs, use_cache=args.use_cache, max_new_tokens=128, do_sample=False)
-        generated_ids = generated_ids.asnumpy()
+    generated_ids = model.generate(**input_kwargs, use_cache=args.use_cache, max_new_tokens=128, do_sample=False)
+    generated_ids = generated_ids.asnumpy()
 
-        filling = tokenizer.batch_decode(generated_ids[:, input_ids.shape[1]:], skip_special_tokens = True)[0].strip()
+    filling = tokenizer.batch_decode(generated_ids[:, input_ids.shape[1]:], skip_special_tokens = True)[0].strip()
 
-        print(f"=====> input prompt: {prompt}, time cost: {time.time() - s_time:.2f}s")
-        print("=" * 46 + " Result " + "=" * 46)
-        print(PROMPT.replace("<FILL_ME>", filling))
-        print("=" * 100)
+    print(f"=====> input prompt: {prompt}, time cost: {time.time() - s_time:.2f}s")
+    print("=" * 46 + " Result " + "=" * 46)
+    print(PROMPT.replace("<FILL_ME>", filling))
+    print("=" * 100)
 
 
 if __name__ == "__main__":

@@ -41,10 +41,10 @@ After conversion, the model and tokenizer can be loaded as follows:
 
 >>> from transformers import CodeLlamaTokenizer
 >>> from mindway.transformers.models.llama import LlamaForCausalLM
->>> import mindspore as ms 
+>>> import mindspore as ms
 
 >>> tokenizer = CodeLlamaTokenizer.from_pretrained("meta-llama/CodeLlama-7b-hf")
->>> model = LlamaForCausalLM.from_pretrained("meta-llama/CodeLlama-7b-hf")
+>>> model = LlamaForCausalLM.from_pretrained("meta-llama/CodeLlama-7b-hf", use_flash_attention_2=args.use_fa, mindspore_dtype=ms.float16)
 >>> PROMPT = '''def remove_non_ascii(s: str) -> str:
     """ <FILL_ME>
     return result
