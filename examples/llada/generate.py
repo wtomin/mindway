@@ -142,7 +142,9 @@ def main():
     prompt = tokenizer.apply_chat_template(m, add_generation_prompt=True, tokenize=False)
 
     input_ids = tokenizer(prompt, return_tensors="np")["input_ids"]
-    input_ids = Tensor(input_ids)
+    input_ids = (
+        Tensor(input_ids) if (len(input_ids) == 2 and input_ids.shape[0] == 1) else Tensor(input_ids).unsqueeze(0)
+    )  # (1, L)
 
     out = generate(
         model,

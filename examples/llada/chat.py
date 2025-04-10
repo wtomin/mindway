@@ -33,7 +33,9 @@ def chat():
         m = [{"role": "user", "content": user_input}]
         user_input = tokenizer.apply_chat_template(m, add_generation_prompt=True, tokenize=False)
         input_ids = tokenizer(user_input)["input_ids"]
-        input_ids = Tensor(input_ids)
+        input_ids = (
+            Tensor(input_ids) if (len(input_ids) == 2 and input_ids.shape[0] == 1) else Tensor(input_ids).unsqueeze(0)
+        )  # (1, L)
 
         if conversation_num == 0:
             prompt = input_ids
@@ -55,7 +57,7 @@ def chat():
         print(f"Bot's reply: {answer}")
 
         # remove the <EOS>
-        prompt = out[out != 126081]
+        prompt = out[out != 126081].unsqueeze(0)
         conversation_num += 1
         print("-----------------------------------------------------------------------")
 
