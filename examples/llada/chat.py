@@ -11,9 +11,8 @@ __dir__ = os.path.dirname(os.path.abspath(__file__))
 mindway_lib_path = os.path.abspath(os.path.join(__dir__, "../../"))
 sys.path.append(mindway_lib_path)
 
-from mindway.transformers.models.llada import LLaDAModelLM
-
 from examples.llada.generate import generate
+from mindway.transformers.models.llada import LLaDAModelLM
 
 
 def chat():
