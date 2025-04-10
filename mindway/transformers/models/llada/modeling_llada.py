@@ -4,43 +4,31 @@ import logging
 import math
 import sys
 from abc import abstractmethod
-from collections import defaultdict
-from functools import partial
-from typing import (
-    Callable,
-    Dict,
-    Iterable,
-    List,
-    NamedTuple,
-    Optional,
-    Sequence,
-    Set,
-    Tuple,
-    cast,
-)
 from dataclasses import fields
-from typing import List, Optional, Tuple, Union
+from typing import Iterable, List, NamedTuple, Optional, Sequence, Tuple, Union, cast
 
 import numpy as np
+
 import mindspore as ms
 import mindspore.nn as nn
 import mindspore.ops as ops
-from mindspore import Tensor, Parameter, mint
-from mindspore.common.initializer import initializer, Normal, Constant, TruncatedNormal, HeNormal
+from mindspore import Parameter, Tensor, mint
+from mindspore.common.initializer import Constant, HeNormal, Normal, TruncatedNormal, initializer
+
 from mindway.transformers import MSPreTrainedModel
+from mindway.transformers.cache_utils import Cache
 from mindway.transformers.modeling_outputs import CausalLMOutputWithPast
 from mindway.transformers.models.auto import AutoModel
-from mindway.transformers.cache_utils import Cache
 
 from .configuration_llada import (
-    LLaDAConfig,
-    StrEnum,
-    InitFnType,
+    ActivationCheckpointingStrategy,
     ActivationType,
     BlockType,
+    InitFnType,
     LayerNormType,
+    LLaDAConfig,
     ModelConfig,
-    ActivationCheckpointingStrategy,
+    StrEnum,
 )
 
 if sys.version_info.minor > 8:
@@ -77,16 +65,18 @@ class ModuleType(StrEnum):
     emb = "emb"
     final_out = "final_out"
 
+
 DTYPE_FP16_MIN = float(np.finfo(np.float16).min)
 DTYPE_FP32_MIN = float(np.finfo(np.float32).min)
 DTYPE_FP16_MAX = float(np.finfo(np.float16).max)
 DTYPE_FP32_MAX = float(np.finfo(np.float32).max)
 
-DTYPE_MIN_MAX_MAPPINGS={
+DTYPE_MIN_MAX_MAPPINGS = {
     ms.float16: {"min": DTYPE_FP16_MIN, "max": DTYPE_FP16_MAX},
     ms.float32: {"min": DTYPE_FP32_MIN, "max": DTYPE_FP32_MAX},
     ms.bfloat16: {"min": DTYPE_FP32_MIN, "max": DTYPE_FP32_MAX},
 }
+
 
 def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False, dtype=None):
     # force dtype(fp16 or bf16) precision calculation
@@ -97,7 +87,7 @@ def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.
     if attn_mask is not None:
         if attn_mask.dtype == ms.bool_:
             attn_mask = attn_mask.to(ms.float32)
-            attn_mask = attn_mask.masked_fill((1 - attn_mask).to(ms.bool_), DTYPE_MIN_MAX_MAPPINGS[ms.float16]['min'])
+            attn_mask = attn_mask.masked_fill((1 - attn_mask).to(ms.bool_), DTYPE_MIN_MAX_MAPPINGS[ms.float16]["min"])
         attn_mask = attn_mask.to(query.dtype)
 
         attn_weight = mint.nn.functional.softmax(
@@ -111,7 +101,9 @@ def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.
         if is_causal:
             # assert attn_mask is None
             temp_mask = mint.ones((L, S), dtype=ms.bool_).tril(diagonal=0)
-            attn_bias = ops.masked_fill(attn_bias, mint.logical_not(temp_mask), DTYPE_MIN_MAX_MAPPINGS[ms.float16]['min'])
+            attn_bias = ops.masked_fill(
+                attn_bias, mint.logical_not(temp_mask), DTYPE_MIN_MAX_MAPPINGS[ms.float16]["min"]
+            )
             attn_bias = attn_bias.to(query.dtype)
 
         attn_weight = mint.nn.functional.softmax(
@@ -127,17 +119,24 @@ def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.
 
     return out
 
+
 def constant_(tensor: Parameter, val: float) -> None:
     tensor.set_data(initializer(Constant(val), tensor.shape, tensor.dtype))
+
 
 def normal_(tensor: Parameter, mean: float = 0.0, std: float = 1.0) -> None:
     tensor.set_data(initializer(Normal(sigma=std, mean=mean), tensor.shape, tensor.dtype))
 
+
 def trunc_normal_(tensor: Parameter, mean: float = 0.0, std: float = 1.0, a=-2, b=2) -> None:
     tensor.set_data(initializer(TruncatedNormal(sigma=std, mean=mean, a=a, b=b), tensor.shape, tensor.dtype))
 
-def kaiming_normal_(tensor: Parameter, a:float=0, mode:str='fan_in', nonlinearity:str='leaky_relu') -> None:
-    tensor.set_data(initializer(HeNormal(negative_slope=a, mode=mode, nonlinearity=nonlinearity), tensor.shape, tensor.dtype))
+
+def kaiming_normal_(tensor: Parameter, a: float = 0, mode: str = "fan_in", nonlinearity: str = "leaky_relu") -> None:
+    tensor.set_data(
+        initializer(HeNormal(negative_slope=a, mode=mode, nonlinearity=nonlinearity), tensor.shape, tensor.dtype)
+    )
+
 
 def init_weights(
     config: ModelConfig,
@@ -222,9 +221,9 @@ def ensure_finite_(x: Tensor, check_neg_inf: bool = True, check_pos_inf: bool = 
     is ``True`` and to replace ``float("inf")`` with the maximum value of the dtype when ``check_pos_inf`` is ``True``.
     """
     if check_neg_inf:
-        x = ops.masked_fill(x, x == float("-inf"), DTYPE_MIN_MAX_MAPPINGS[x.dtype]['min'])
+        x = ops.masked_fill(x, x == float("-inf"), DTYPE_MIN_MAX_MAPPINGS[x.dtype]["min"])
     if check_pos_inf:
-        x = ops.masked_fill(x, x == float("inf"), DTYPE_MIN_MAX_MAPPINGS[x.dtype]['max'])
+        x = ops.masked_fill(x, x == float("inf"), DTYPE_MIN_MAX_MAPPINGS[x.dtype]["max"])
     return x
 
 
@@ -241,6 +240,7 @@ class BufferCache(dict, MutableMapping[str, Tensor]):
 
 def _non_meta_init_device(config: ModelConfig) -> str:
     return None
+
 
 class LayerNormBase(nn.Cell):
     def __init__(
@@ -316,9 +316,11 @@ class LayerNorm(LayerNormBase):
             weight = self.weight.to(ms.bfloat16) if self.weight is not None else None
             bias = self.bias.to(ms.bfloat16) if self.bias is not None else None
             return self.layer_norm(x, weight, bias)[0].to(ori_dtype)
-            
+
         else:
-            return self.layer_norm(x.to(ms.float32), self.weight.to(ms.float32), self.bias.to(ms.float32))[0].to(ori_dtype)
+            return self.layer_norm(x.to(ms.float32), self.weight.to(ms.float32), self.bias.to(ms.float32))[0].to(
+                ori_dtype
+            )
 
 
 class RMSLayerNorm(LayerNormBase):
@@ -392,7 +394,7 @@ class RotaryEmbedding(nn.Cell):
         self.__cache = cache
         # Warm up cache.
         self.rope_theta = config.rope_theta
-        self.get_rotary_embedding(config.max_sequence_length, _non_meta_init_device(config))
+        self.get_rotary_embedding(config.max_sequence_length)
 
     def get_rotary_embedding(self, seq_len: int) -> Tuple[Tensor, Tensor]:
         if (
@@ -401,7 +403,6 @@ class RotaryEmbedding(nn.Cell):
             and pos_sin.shape[-2] >= seq_len
             and pos_cos.shape[-2] >= seq_len
         ):
-
             self.__cache["rope_pos_sin"] = pos_sin
             self.__cache["rope_pos_cos"] = pos_cos
             return pos_sin[:, :, :seq_len, :], pos_cos[:, :, :seq_len, :]
@@ -506,13 +507,12 @@ def causal_attention_bias(seq_len: int) -> Tensor:
         ops.ones((seq_len, seq_len), dtype=ms.float32),
         diagonal=1,
     )
-    att_bias = ops.masked_fill(att_bias, att_bias == 1, DTYPE_MIN_MAX_MAPPINGS[att_bias.dtype]['min'])
+    att_bias = ops.masked_fill(att_bias, att_bias == 1, DTYPE_MIN_MAX_MAPPINGS[att_bias.dtype]["min"])
     return att_bias.view(1, 1, seq_len, seq_len)
 
 
 def get_causal_attention_bias(cache: BufferCache, seq_len: int) -> Tensor:
     if (causal_bias := cache.get("causal_attention_bias")) is not None and causal_bias.shape[-1] >= seq_len:
-
         cache["causal_attention_bias"] = causal_bias
         return causal_bias
     causal_bias = causal_attention_bias(seq_len)
@@ -569,9 +569,7 @@ class LLaDABlock(nn.Cell):
         assert (self.act.output_multiplier * self.hidden_size) % 1 == 0
 
         # Attention output projection.
-        self.attn_out = nn.Dense(
-            config.d_model, config.d_model, has_bias=config.include_bias
-        )
+        self.attn_out = nn.Dense(config.d_model, config.d_model, has_bias=config.include_bias)
 
         # Feed-forward output projection.
         self.ff_out = nn.Dense(
@@ -612,6 +610,7 @@ class LLaDABlock(nn.Cell):
             layer_id=self.layer_id,
             type_of_module=ModuleType.out_module,
         )
+
     @classmethod
     def _cast_attn_bias(cls, bias: Tensor, input_dtype) -> Tensor:
         target_dtype = input_dtype
@@ -620,7 +619,6 @@ class LLaDABlock(nn.Cell):
             bias = bias.to(target_dtype)
             ensure_finite_(bias, check_neg_inf=True, check_pos_inf=False)
         return bias
-
 
     def _scaled_dot_product_attention(
         self,
@@ -704,9 +702,7 @@ class LLaDABlock(nn.Cell):
             # as down-casting the attention bias to the autocast precision will result in -infs, which will
             # cause the SDP attn function to produce NaNs.
 
-            attention_bias = self._cast_attn_bias(
-                attention_bias[:, :, key_len - query_len : key_len, :key_len], dtype
-            )
+            attention_bias = self._cast_attn_bias(attention_bias[:, :, key_len - query_len : key_len, :key_len], dtype)
 
         # Get the attention scores.
         # shape: (B, nh, T, hs)
@@ -767,9 +763,7 @@ class LLaDASequentialBlock(LLaDABlock):
             config.d_model, sum(self.fused_dims), has_bias=config.include_bias | config.include_qkv_bias
         )
         # Feed-forward input projection.
-        self.ff_proj = nn.Dense(
-            config.d_model, self.hidden_size, has_bias=config.include_bias
-        )
+        self.ff_proj = nn.Dense(config.d_model, self.hidden_size, has_bias=config.include_bias)
 
     def reset_parameters(self):
         super().reset_parameters()
@@ -840,24 +834,14 @@ class LLaDALlamaBlock(LLaDABlock):
         q_proj_out_dim = config.d_model
         k_proj_out_dim = config.effective_n_kv_heads * head_dim
         v_proj_out_dim = config.effective_n_kv_heads * head_dim
-        self.q_proj = nn.Dense(
-            config.d_model, q_proj_out_dim, has_bias=config.include_bias | config.include_qkv_bias
-        )
-        self.k_proj = nn.Dense(
-            config.d_model, k_proj_out_dim, has_bias=config.include_bias | config.include_qkv_bias
-        )
-        self.v_proj = nn.Dense(
-            config.d_model, v_proj_out_dim, has_bias=config.include_bias | config.include_qkv_bias
-        )
+        self.q_proj = nn.Dense(config.d_model, q_proj_out_dim, has_bias=config.include_bias | config.include_qkv_bias)
+        self.k_proj = nn.Dense(config.d_model, k_proj_out_dim, has_bias=config.include_bias | config.include_qkv_bias)
+        self.v_proj = nn.Dense(config.d_model, v_proj_out_dim, has_bias=config.include_bias | config.include_qkv_bias)
 
         # Feed-forward input projection.
-        self.ff_proj = nn.Dense(
-            config.d_model, self.hidden_size, has_bias=config.include_bias
-        )
+        self.ff_proj = nn.Dense(config.d_model, self.hidden_size, has_bias=config.include_bias)
         # new add
-        self.up_proj = nn.Dense(
-            config.d_model, self.hidden_size, has_bias=config.include_bias
-        )
+        self.up_proj = nn.Dense(config.d_model, self.hidden_size, has_bias=config.include_bias)
 
     def reset_parameters(self):
         super().reset_parameters()
@@ -901,9 +885,9 @@ class LLaDALlamaBlock(LLaDABlock):
         # shape: (batch_size, seq_len, d_model)
         og_x = x
         x = self.ff_norm(x)
-        x, x_up = self.ff_proj(x), self.up_proj(x) # new add
+        x, x_up = self.ff_proj(x), self.up_proj(x)  # new add
         x = self.act(x)
-        x = x * x_up # new add
+        x = x * x_up  # new add
         x = self.ff_out(x)
         x = self.dropout(x)
         x = og_x + x
@@ -1031,9 +1015,7 @@ class LLaDAModel(nn.Cell):
 
         self.transformer = nn.CellDict(
             dict(
-                wte=nn.Embedding(
-                    config.embedding_size or config.vocab_size, config.d_model
-                ),
+                wte=nn.Embedding(config.embedding_size or config.vocab_size, config.d_model),
                 emb_drop=nn.Dropout(p=config.embedding_dropout),
                 ln_f=LayerNorm.build(config),
             )
@@ -1050,9 +1032,7 @@ class LLaDAModel(nn.Cell):
             self.transformer.update({"blocks": nn.CellList(blocks)})
 
         if not (self.config.alibi or self.config.rope):
-            self.transformer.update(
-                {"wpe": nn.Embedding(config.max_sequence_length, config.d_model)}
-            )
+            self.transformer.update({"wpe": nn.Embedding(config.max_sequence_length, config.d_model)})
         if not config.weight_tying:
             self.transformer.update(
                 {
@@ -1082,8 +1062,6 @@ class LLaDAModel(nn.Cell):
             for block in self.transformer.blocks:
                 block.set_activation_checkpointing(strategy)
 
-
-
     def reset_parameters(self):
         log.info("Initializing model parameters...")
         # Top-level embeddings / linear layers.
@@ -1112,10 +1090,7 @@ class LLaDAModel(nn.Cell):
                 block_group.reset_parameters()
 
     def get_alibi_attention_bias(self, seq_len: int) -> Tensor:
-        if (alibi_bias := self.__cache.get("alibi_attention_bias")) is not None and alibi_bias.shape[
-            -1
-        ] >= seq_len:
-
+        if (alibi_bias := self.__cache.get("alibi_attention_bias")) is not None and alibi_bias.shape[-1] >= seq_len:
             self.__cache["alibi_attention_bias"] = alibi_bias
             return alibi_bias
         alibi_bias = alibi_attention_bias(seq_len, self.config)
@@ -1166,7 +1141,7 @@ class LLaDAModel(nn.Cell):
         # Add Basic MDM Model config check
         assert not self.config.alibi, "Alibi length extrapolation is not supported for MDM."
         assert self.config.rope, "Rope must be used in Llama-Encoder for MDM."
-        assert (past_key_values is None and not use_cache), "The kvcache is not suppotred for MDM."
+        assert past_key_values is None and not use_cache, "The kvcache is not suppotred for MDM."
 
         output_hidden_states = output_hidden_states if output_hidden_states is not None else False
 
@@ -1202,7 +1177,7 @@ class LLaDAModel(nn.Cell):
         if attention_mask is not None and 0.0 in attention_mask:
             # shape: (batch_size, 1, 1, seq_len)
             attention_mask = attention_mask.astype(ms.float32).view(batch_size, -1)[:, None, None, :]
-            attention_mask = (1.0 - attention_mask) * DTYPE_MIN_MAX_MAPPINGS[attention_mask.dtype]['min']
+            attention_mask = (1.0 - attention_mask) * DTYPE_MIN_MAX_MAPPINGS[attention_mask.dtype]["min"]
         else:
             attention_mask = None
 
@@ -1218,13 +1193,16 @@ class LLaDAModel(nn.Cell):
         ):
             if attention_bias is None and self.config.alibi:
                 attention_bias = get_causal_attention_bias(
-                    self.__cache, past_length + seq_len, 
+                    self.__cache,
+                    past_length + seq_len,
                 ) + self.get_alibi_attention_bias(past_length + seq_len)
             elif attention_bias is None:
                 attention_bias = get_causal_attention_bias(self.__cache, past_length + seq_len)
             elif attention_bias.dtype in (ms.int8, ms.bool_):
                 attention_bias = attention_bias.astype(ms.float32)
-                attention_bias = ops.masked_fill(attention_bias, attention_bias == 0.0, DTYPE_MIN_MAX_MAPPINGS[attention_bias.dtype]['min'])
+                attention_bias = ops.masked_fill(
+                    attention_bias, attention_bias == 0.0, DTYPE_MIN_MAX_MAPPINGS[attention_bias.dtype]["min"]
+                )
 
             # Transform to the right shape and data type.
             mask_len = seq_len
@@ -1293,9 +1271,7 @@ class LLaDAModel(nn.Cell):
                         group_idx * self.config.block_group_size : (group_idx + 1) * self.config.block_group_size
                     ]
                 )
-                x, cache = block_group(
-                    x, attention_bias=attention_bias, layers_past=layers_past, use_cache=use_cache
-                )
+                x, cache = block_group(x, attention_bias=attention_bias, layers_past=layers_past, use_cache=use_cache)
                 if attn_key_values is not None:
                     assert cache is not None
                     attn_key_values.extend(cache)
@@ -1320,7 +1296,11 @@ class LLaDAModel(nn.Cell):
         if self.config.scale_logits:
             logits = logits * (1 / math.sqrt(self.config.d_model))
 
-        return LLaDAOutput(logits=logits, attn_key_values=attn_key_values, hidden_states=tuple(all_hidden_states) if output_hidden_states else None)
+        return LLaDAOutput(
+            logits=logits,
+            attn_key_values=attn_key_values,
+            hidden_states=tuple(all_hidden_states) if output_hidden_states else None,
+        )
 
 
 def create_model_config_from_pretrained_config(config: LLaDAConfig):
@@ -1394,6 +1374,7 @@ class LLaDAModelLM(MSPreTrainedModel):
         loss = None
         if labels is not None:
             import warnings
+
             warnings.warn("Note that for LLaDA, you cannot calculate the loss here.", UserWarning)
         if not return_dict:
             output = (logits,) + outputs[1:]
@@ -1408,9 +1389,7 @@ class LLaDAModelLM(MSPreTrainedModel):
     def can_generate(self) -> bool:
         return True
 
-    def prepare_inputs_for_generation(
-        self, input_ids: Tensor, past_key_values: Optional[List[Tuple]] = None, **kwargs
-    ):
+    def prepare_inputs_for_generation(self, input_ids: Tensor, past_key_values: Optional[List[Tuple]] = None, **kwargs):
         if past_key_values:
             # This is because we want the model to only process the last generated token.
             input_ids = input_ids[:, -1:]
@@ -1441,6 +1420,7 @@ class LLaDAModelLM(MSPreTrainedModel):
     def tie_weights(self):
         if self.config.weight_tying:
             self.model.transformer.ff_out = self.model.transformer.wte
+
 
 # Register the model so that it is available for transformer pipelines, auto-loading, etc.
 AutoModel.register(LLaDAConfig, LLaDAModelLM)
