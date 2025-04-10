@@ -1,7 +1,15 @@
+import os
+import sys
+
 from transformers import AutoConfig, AutoTokenizer
 
 import mindspore as ms
 from mindspore import Tensor, mint
+
+# TODO: remove in future when mindway is ready for install
+__dir__ = os.path.dirname(os.path.abspath(__file__))
+mindway_lib_path = os.path.abspath(os.path.join(__dir__, "../../"))
+sys.path.append(mindway_lib_path)
 
 from mindway.transformers.models.llada import LLaDAModelLM
 
