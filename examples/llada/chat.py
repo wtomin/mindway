@@ -13,7 +13,7 @@ sys.path.append(mindway_lib_path)
 
 from mindway.transformers.models.llada import LLaDAModelLM
 
-from .generate import generate
+from examples.llada.generate import generate
 
 
 def chat():
