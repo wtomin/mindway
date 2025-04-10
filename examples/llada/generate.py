@@ -3,7 +3,7 @@ from transformers import AutoConfig, AutoTokenizer
 
 import mindspore as ms
 import mindspore.ops as ops
-from mindspore import Tensor
+from mindspore import Tensor, mint
 
 from mindway.transformers.models.llada import LLaDAModelLM
 
@@ -96,11 +96,11 @@ def generate(
                 logits = model(x).logits
 
             logits_with_noise = add_gumbel_noise(logits, temperature=temperature)
-            x0 = ops.argmax(logits_with_noise, axis=-1)  # b, l
+            x0 = ops.argmax(logits_with_noise, dim=-1)  # b, l
 
             if remasking == "low_confidence":
                 p = ops.softmax(logits.to(ms.float64), axis=-1)
-                x0_p = ops.squeeze(ops.gather(p, -1, ops.unsqueeze(x0, -1)), -1)  # b, l
+                x0_p = ops.squeeze(mint.gather(p, dim=-1, index=ops.unsqueeze(x0, -1)), -1)  # b, l
             elif remasking == "random":
                 x0_p = ops.rand((x0.shape[0], x0.shape[1]))
             else:
@@ -134,7 +134,7 @@ def main():
     prompt = tokenizer.apply_chat_template(m, add_generation_prompt=True, tokenize=False)
 
     input_ids = tokenizer(prompt, return_tensors="np")["input_ids"]
-    input_ids = Tensor(input_ids).unsqueeze(0)
+    input_ids = Tensor(input_ids)
 
     out = generate(
         model,
