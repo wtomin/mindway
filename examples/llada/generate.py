@@ -35,7 +35,7 @@ def get_num_transfer_tokens(mask_index, steps):
     base = mask_num // steps
     remainder = mask_num % steps
 
-    num_transfer_tokens = ops.zeros((mask_num.shape[0], steps), dtype=ms.int64) + base
+    num_transfer_tokens = ops.zeros((mask_num.shape[0], steps), dtype=ms.int32) + base
 
     for i in range(mask_num.shape[0]):
         num_transfer_tokens[i, : remainder[i]] += 1
@@ -66,7 +66,7 @@ def generate(
         remasking: Remasking strategy. 'low_confidence' or 'random'.
         mask_id: The toke id of [MASK] is 126336.
     """
-    x = ops.full((1, prompt.shape[1] + gen_length), mask_id, dtype=ms.int64)
+    x = ops.full((1, prompt.shape[1] + gen_length), mask_id, dtype=ms.int32)
     x[:, : prompt.shape[1]] = prompt.copy()
 
     prompt_index = x != mask_id

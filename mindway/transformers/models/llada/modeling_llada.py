@@ -983,6 +983,7 @@ class LLaDABlockGroup(nn.CellList):
 
 class Transformer(nn.Cell):
     def __init__(self, config: ModelConfig, cache: BufferCache):
+        super().__init__()
         self.config = config
         self.__cache = cache
         self.wte = nn.Embedding(config.embedding_size or config.vocab_size, config.d_model)
@@ -1163,7 +1164,7 @@ class LLaDAModel(nn.Cell):
         if not (self.config.alibi or self.config.rope):
             # Get positional embeddings.
             # shape: (1, seq_len)
-            pos = ops.arange(past_length, past_length + seq_len, dtype=ms.int64).unsqueeze(0)
+            pos = ops.arange(past_length, past_length + seq_len, dtype=ms.int32).unsqueeze(0)
             # shape: (1, seq_len, d_model)
             pos_emb = self.transformer.wpe(pos)
             x = pos_emb + x
@@ -1346,7 +1347,7 @@ class LLaDAModelLM(MSPreTrainedModel):
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
-        return_dict: bool = False,
+        return_dict: bool = True,
         cache_position: Optional[Cache] = None,  # This is a hack mitigation of an issue in transformers `4.39.x`
     ) -> Union[Tuple, CausalLMOutputWithPast]:
         if use_cache is None:
