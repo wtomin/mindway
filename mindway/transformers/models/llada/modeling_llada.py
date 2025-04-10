@@ -981,6 +981,34 @@ class LLaDABlockGroup(nn.CellList):
             block.set_activation_checkpointing(strategy)
 
 
+class Transformer(nn.Cell):
+    def __init__(self, config: ModelConfig, cache: BufferCache):
+        self.config = config
+        self.__cache = cache
+        self.wte = nn.Embedding(config.embedding_size or config.vocab_size, config.d_model)
+        self.emb_drop = nn.Dropout(p=config.embedding_dropout)
+        self.ln_f = LayerNorm.build(config)
+
+        blocks = [LLaDABlock.build(i, config, self.__cache) for i in range(config.n_layers)]
+        if self.config.block_group_size > 1:
+            block_groups = [
+                LLaDABlockGroup(config, i, blocks[i : i + config.block_group_size])
+                for i in range(0, config.n_layers, config.block_group_size)
+            ]
+            self.block_groups = nn.CellList(block_groups)
+        else:
+            self.blocks = nn.CellList(blocks)
+
+        if not (self.config.alibi or self.config.rope):
+            self.wpe = nn.Embedding(config.max_sequence_length, config.d_model)
+        if not config.weight_tying:
+            self.ff_out = nn.Dense(
+                config.d_model,
+                config.embedding_size or config.vocab_size,
+                has_bias=config.include_bias,
+            )
+
+
 class LLaDAModel(nn.Cell):
     def __init__(self, config: ModelConfig, init_params: bool = True):
         super().__init__()
@@ -1013,36 +1041,7 @@ class LLaDAModel(nn.Cell):
         # torch.backends.cuda.enable_flash_sdp(True)
         # torch.backends.cuda.enable_mem_efficient_sdp(False)  # this is super slow so make sure torch won't use it
 
-        self.transformer = nn.CellDict(
-            dict(
-                wte=nn.Embedding(config.embedding_size or config.vocab_size, config.d_model),
-                emb_drop=nn.Dropout(p=config.embedding_dropout),
-                ln_f=LayerNorm.build(config),
-            )
-        )
-
-        blocks = [LLaDABlock.build(i, config, self.__cache) for i in range(config.n_layers)]
-        if self.config.block_group_size > 1:
-            block_groups = [
-                LLaDABlockGroup(config, i, blocks[i : i + config.block_group_size])
-                for i in range(0, config.n_layers, config.block_group_size)
-            ]
-            self.transformer.update({"block_groups": nn.CellList(block_groups)})
-        else:
-            self.transformer.update({"blocks": nn.CellList(blocks)})
-
-        if not (self.config.alibi or self.config.rope):
-            self.transformer.update({"wpe": nn.Embedding(config.max_sequence_length, config.d_model)})
-        if not config.weight_tying:
-            self.transformer.update(
-                {
-                    "ff_out": nn.Dense(
-                        config.d_model,
-                        config.embedding_size or config.vocab_size,
-                        has_bias=config.include_bias,
-                    )
-                }
-            )
+        self.transformer = Transformer(config, self.__cache)
         # When `init_device="meta"` FSDP will call `reset_parameters()` to initialize weights.
         if init_params and self.config.init_device != "meta":
             self.reset_parameters()
