@@ -74,8 +74,10 @@ def generate(
         remasking: Remasking strategy. 'low_confidence' or 'random'.
         mask_id: The toke id of [MASK] is 126336.
     """
-    x = ops.full((1, prompt.shape[1] + gen_length), mask_id, dtype=ms.int64)
-    x[:, : prompt.shape[1]] = prompt.copy()
+    # x = ops.full((1, prompt.shape[1] + gen_length), mask_id, dtype=ms.int64)
+    # x[:, : prompt.shape[1]] = prompt.copy()
+    # avoid inplace operation
+    x = ops.cat([prompt.copy(), ops.full((1, gen_length), mask_id, dtype=prompt.dtype)], axis=1)
 
     prompt_index = x != mask_id
 
@@ -143,7 +145,7 @@ def main():
 
     input_ids = tokenizer(prompt, return_tensors="np")["input_ids"]
     input_ids = (
-        Tensor(input_ids) if (len(input_ids) == 2 and input_ids.shape[0] == 1) else Tensor(input_ids).unsqueeze(0)
+        Tensor(input_ids) if (len(input_ids.shape) == 2 and input_ids.shape[0] == 1) else Tensor(input_ids).unsqueeze(0)
     )  # (1, L)
 
     out = generate(
