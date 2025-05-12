@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import math
 import sys
+import warnings
 from abc import abstractmethod
 from dataclasses import fields
 from typing import Iterable, List, NamedTuple, Optional, Sequence, Tuple, Union, cast
@@ -397,9 +398,12 @@ class RotaryEmbedding(nn.Cell):
         self.get_rotary_embedding(config.max_sequence_length)
 
     def get_rotary_embedding(self, seq_len: int) -> Tuple[Tensor, Tensor]:
+        pos_sin = self.__cache.get("rope_pos_sin")
+        pos_cos = self.__cache.get("rope_pos_cos")
+
         if (
-            (pos_sin := self.__cache.get("rope_pos_sin")) is not None
-            and (pos_cos := self.__cache.get("rope_pos_cos")) is not None
+            pos_sin is not None
+            and pos_cos is not None
             and pos_sin.shape[-2] >= seq_len
             and pos_cos.shape[-2] >= seq_len
         ):
@@ -512,7 +516,8 @@ def causal_attention_bias(seq_len: int) -> Tensor:
 
 
 def get_causal_attention_bias(cache: BufferCache, seq_len: int) -> Tensor:
-    if (causal_bias := cache.get("causal_attention_bias")) is not None and causal_bias.shape[-1] >= seq_len:
+    causal_bias = cache.get("causal_attention_bias")
+    if causal_bias is not None and causal_bias.shape[-1] >= seq_len:
         cache["causal_attention_bias"] = causal_bias
         return causal_bias
     causal_bias = causal_attention_bias(seq_len)
@@ -1027,8 +1032,6 @@ class LLaDAModel(nn.Cell):
             if self.config.embedding_size < self.config.vocab_size:
                 raise Exception("embedding size should be at least as big as vocab size")
             elif self.config.embedding_size % 128 != 0:
-                import warnings
-
                 warnings.warn(
                     "Embedding size is not a multiple of 128! This could hurt throughput performance.", UserWarning
                 )
@@ -1090,7 +1093,8 @@ class LLaDAModel(nn.Cell):
                 block_group.reset_parameters()
 
     def get_alibi_attention_bias(self, seq_len: int) -> Tensor:
-        if (alibi_bias := self.__cache.get("alibi_attention_bias")) is not None and alibi_bias.shape[-1] >= seq_len:
+        alibi_bias = self.__cache.get("alibi_attention_bias")
+        if alibi_bias is not None and alibi_bias.shape[-1] >= seq_len:
             self.__cache["alibi_attention_bias"] = alibi_bias
             return alibi_bias
         alibi_bias = alibi_attention_bias(seq_len, self.config)
@@ -1373,8 +1377,6 @@ class LLaDAModelLM(MSPreTrainedModel):
 
         loss = None
         if labels is not None:
-            import warnings
-
             warnings.warn("Note that for LLaDA, you cannot calculate the loss here.", UserWarning)
         if not return_dict:
             output = (logits,) + outputs[1:]
