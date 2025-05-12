@@ -46,7 +46,7 @@ def get_num_transfer_tokens(mask_index, steps):
     num_transfer_tokens = ops.zeros((mask_num.shape[0], steps), dtype=ms.int64) + base
 
     for i in range(mask_num.shape[0]):
-        num_transfer_tokens[i, : remainder[i]] += 1
+        num_transfer_tokens[i, : remainder[0, i]] += 1
 
     return num_transfer_tokens
 
@@ -99,11 +99,11 @@ def generate(
                 un_x = x.copy()
                 un_x[prompt_index] = mask_id
                 x_ = ops.cat([x, un_x], axis=0)
-                logits = model(x_).logits
+                logits = model(x_, return_dict=False)
                 logits, un_logits = ops.chunk(logits, 2, axis=0)
                 logits = un_logits + (cfg_scale + 1) * (logits - un_logits)
             else:
-                logits = model(x).logits
+                logits = model(x, return_dict=False)
 
             logits_with_noise = add_gumbel_noise(logits, temperature=temperature)
             x0 = ops.argmax(logits_with_noise, dim=-1)  # b, l
