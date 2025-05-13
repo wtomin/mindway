@@ -99,11 +99,11 @@ def generate(
                 un_x = x.copy()
                 un_x[prompt_index] = mask_id
                 x_ = ops.cat([x, un_x], axis=0)
-                logits = model(x_, return_dict=False)
+                logits = model(x_, return_dict=False)[0]
                 logits, un_logits = ops.chunk(logits, 2, axis=0)
                 logits = un_logits + (cfg_scale + 1) * (logits - un_logits)
             else:
-                logits = model(x, return_dict=False)
+                logits = model(x, return_dict=False)[0]
 
             logits_with_noise = add_gumbel_noise(logits, temperature=temperature)
             x0 = ops.argmax(logits_with_noise, dim=-1)  # b, l
