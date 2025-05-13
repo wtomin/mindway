@@ -138,6 +138,50 @@ def generate(
     return x
 
 
+def run_profiler(
+    model,
+    prompt,
+    steps=128,
+    gen_length=128,
+    block_length=128,
+    temperature=0.0,
+    cfg_scale=0.0,
+    remasking="low_confidence",
+    mask_id=126336,
+):
+    x = ops.cat([prompt.copy(), ops.full((1, gen_length), mask_id, dtype=prompt.dtype)], axis=1)
+
+    prompt_index = x != mask_id
+
+    assert gen_length % block_length == 0
+    num_blocks = gen_length // block_length
+
+    assert steps % num_blocks == 0
+    steps = steps // num_blocks
+    output_path = "./profiler_data"
+    profiler = ms.Profiler(start_profile=False, output_path=output_path)
+    for num_block in range(num_blocks):
+        for i in range(steps):
+            if i == 1:
+                profiler.start()
+            if cfg_scale > 0.0:
+                un_x = x.copy()
+                un_x[prompt_index] = mask_id
+                x_ = ops.cat([x, un_x], axis=0)
+                logits = model(x_, return_dict=False)[0]
+                logits, un_logits = ops.chunk(logits, 2, axis=0)
+                logits = un_logits + (cfg_scale + 1) * (logits - un_logits)
+            else:
+                logits = model(x, return_dict=False)[0]
+            if i == 1:
+                break
+        break
+    profiler.stop()
+    profiler.analyse()
+
+    print(f"Profiler analysis finished. See results in {output_path}")
+
+
 def main():
     tokenizer = AutoTokenizer.from_pretrained("GSAI-ML/LLaDA-8B-Instruct", trust_remote_code=True)
     config = AutoConfig.from_pretrained("GSAI-ML/LLaDA-8B-Instruct", trust_remote_code=True)
