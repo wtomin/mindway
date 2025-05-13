@@ -402,21 +402,18 @@ class RotaryEmbedding(nn.Cell):
         self.__cache = cache
         # Warm up cache.
         self.rope_theta = config.rope_theta
-        self.get_rotary_embedding(config.max_sequence_length)
+
+        # compute rotary embedding
+        self.pos_sin, self.pos_cos = self.get_rotary_embedding(config.max_sequence_length)
 
     def get_rotary_embedding(self, seq_len: int) -> Tuple[Tensor, Tensor]:
-        pos_sin = self.__cache.get("rope_pos_sin")
-        pos_cos = self.__cache.get("rope_pos_cos")
-
         if (
-            pos_sin is not None
-            and pos_cos is not None
-            and pos_sin.shape[-2] >= seq_len
-            and pos_cos.shape[-2] >= seq_len
+            hasattr(self, "pos_sin")
+            and hasattr(self, "pos_cos")
+            and self.pos_sin.shape[-2] >= seq_len
+            and self.pos_cos.shape[-2] >= seq_len
         ):
-            self.__cache["rope_pos_sin"] = pos_sin
-            self.__cache["rope_pos_cos"] = pos_cos
-            return pos_sin[:, :, :seq_len, :], pos_cos[:, :, :seq_len, :]
+            return self.pos_sin[:, :, :seq_len, :], self.pos_cos[:, :, :seq_len, :]
 
         dim = self.config.d_model // self.config.n_heads
         inv_freq = 1.0 / (self.rope_theta ** (ops.arange(0, dim, 2, dtype=ms.float32) / dim))
@@ -425,8 +422,7 @@ class RotaryEmbedding(nn.Cell):
         freqs = ops.outer(seq, inv_freq)
         positions = ops.cat((freqs, freqs), axis=-1)
         pos_sin, pos_cos = ops.sin(positions)[None, None, :, :], ops.cos(positions)[None, None, :, :]
-        self.__cache["rope_pos_sin"] = pos_sin
-        self.__cache["rope_pos_cos"] = pos_cos
+
         return pos_sin, pos_cos
 
     def rotate_half(self, x: Tensor) -> Tensor:
@@ -522,13 +518,9 @@ def causal_attention_bias(seq_len: int) -> Tensor:
     return att_bias.view(1, 1, seq_len, seq_len)
 
 
-def get_causal_attention_bias(cache: BufferCache, seq_len: int) -> Tensor:
-    causal_bias = cache.get("causal_attention_bias")
-    if causal_bias is not None and causal_bias.shape[-1] >= seq_len:
-        cache["causal_attention_bias"] = causal_bias
-        return causal_bias
+def get_causal_attention_bias(seq_len: int) -> Tensor:
     causal_bias = causal_attention_bias(seq_len)
-    cache["causal_attention_bias"] = causal_bias
+
     return causal_bias
 
 
@@ -1065,8 +1057,8 @@ class LLaDAModel(nn.Cell):
 
         # Warm up cache.
         if self.config.alibi:
-            get_causal_attention_bias(self.__cache, config.max_sequence_length, _non_meta_init_device(config))
-            self.get_alibi_attention_bias(config.max_sequence_length, _non_meta_init_device(config))
+            self.causal_bias = get_causal_attention_bias(config.max_sequence_length)
+            self.alibi_bias = self.get_alibi_attention_bias(config.max_sequence_length)
 
     def set_activation_checkpointing(self, strategy: Optional[ActivationCheckpointingStrategy]):
         self.activation_checkpointing_strategy = strategy
@@ -1105,12 +1097,9 @@ class LLaDAModel(nn.Cell):
                 block_group.reset_parameters()
 
     def get_alibi_attention_bias(self, seq_len: int) -> Tensor:
-        alibi_bias = self.__cache.get("alibi_attention_bias")
-        if alibi_bias is not None and alibi_bias.shape[-1] >= seq_len:
-            self.__cache["alibi_attention_bias"] = alibi_bias
-            return alibi_bias
+        if hasattr(self, "alibi_bias") and self.alibi_bias is not None and self.alibi_bias.shape[-1] >= seq_len:
+            return self.alibi_bias
         alibi_bias = alibi_attention_bias(seq_len, self.config)
-        self.__cache["alibi_attention_bias"] = alibi_bias
         return alibi_bias
 
     def construct(
