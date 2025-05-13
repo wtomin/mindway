@@ -1,7 +1,9 @@
 import os
 import sys
+from time import time
 
 import numpy as np
+from tqdm import tqdm
 from transformers import AutoConfig, AutoTokenizer
 
 import mindspore as ms
@@ -95,39 +97,43 @@ def generate(
             == mask_id
         )
         num_transfer_tokens = get_num_transfer_tokens(block_mask_index, steps)
-        for i in range(steps):
-            mask_index = x == mask_id
-            if cfg_scale > 0.0:
-                un_x = x.copy()
-                un_x[prompt_index] = mask_id
-                x_ = ops.cat([x, un_x], axis=0)
-                logits = model(x_, return_dict=False)[0]
-                logits, un_logits = ops.chunk(logits, 2, axis=0)
-                logits = un_logits + (cfg_scale + 1) * (logits - un_logits)
-            else:
-                logits = model(x, return_dict=False)[0]
+        with tqdm(total=steps, desc=f"Generating Block {num_block}") as pbar:
+            for i in range(steps):
+                step_start = time()
+                mask_index = x == mask_id
+                if cfg_scale > 0.0:
+                    un_x = x.copy()
+                    un_x[prompt_index] = mask_id
+                    x_ = ops.cat([x, un_x], axis=0)
+                    logits = model(x_, return_dict=False)[0]
+                    logits, un_logits = ops.chunk(logits, 2, axis=0)
+                    logits = un_logits + (cfg_scale + 1) * (logits - un_logits)
+                else:
+                    logits = model(x, return_dict=False)[0]
 
-            logits_with_noise = add_gumbel_noise(logits, temperature=temperature)
-            x0 = ops.argmax(logits_with_noise, dim=-1)  # b, l
+                logits_with_noise = add_gumbel_noise(logits, temperature=temperature)
+                x0 = ops.argmax(logits_with_noise, dim=-1)  # b, l
 
-            if remasking == "low_confidence":
-                p = ops.softmax(logits.to(ms.float32), axis=-1)
-                x0_p = ops.squeeze(mint.gather(p, dim=-1, index=ops.unsqueeze(x0, -1)), -1)  # b, l
-            elif remasking == "random":
-                x0_p = ops.rand((x0.shape[0], x0.shape[1]))
-            else:
-                raise NotImplementedError(remasking)
+                if remasking == "low_confidence":
+                    p = ops.softmax(logits.to(ms.float32), axis=-1)
+                    x0_p = ops.squeeze(mint.gather(p, dim=-1, index=ops.unsqueeze(x0, -1)), -1)  # b, l
+                elif remasking == "random":
+                    x0_p = ops.rand((x0.shape[0], x0.shape[1]))
+                else:
+                    raise NotImplementedError(remasking)
 
-            x0_p[:, prompt.shape[1] + (num_block + 1) * block_length :] = -np.inf
+                x0_p[:, prompt.shape[1] + (num_block + 1) * block_length :] = -np.inf
 
-            x0 = ops.where(mask_index, x0, x)
-            confidence = ops.where(mask_index, x0_p, -np.inf)
+                x0 = ops.where(mask_index, x0, x)
+                confidence = ops.where(mask_index, x0_p, -np.inf)
 
-            transfer_index = ops.zeros_like(x0, dtype=ms.bool_)
-            for j in range(confidence.shape[0]):
-                _, select_index = ops.topk(confidence[j], k=num_transfer_tokens[j, i])
-                transfer_index[j, select_index] = True
-            x[transfer_index] = x0[transfer_index]
+                transfer_index = ops.zeros_like(x0, dtype=ms.bool_)
+                for j in range(confidence.shape[0]):
+                    _, select_index = ops.topk(confidence[j], k=num_transfer_tokens[j, i])
+                    transfer_index[j, select_index] = True
+                x[transfer_index] = x0[transfer_index]
+                pbar.set_postfix(iteration_time=f"{time() - step_start:.3f}")
+                pbar.update()
 
     return x
 
@@ -150,7 +156,7 @@ def main():
     input_ids = (
         Tensor(input_ids) if (len(input_ids.shape) == 2 and input_ids.shape[0] == 1) else Tensor(input_ids).unsqueeze(0)
     )  # (1, L)
-
+    infer_start = time()
     out = generate(
         model,
         input_ids,
@@ -161,6 +167,7 @@ def main():
         cfg_scale=0.0,
         remasking="low_confidence",
     )
+    print(f"Inference time: {time() - infer_start:.3f}s")
     print(tokenizer.batch_decode(out[:, input_ids.shape[1] :], skip_special_tokens=True)[0])
 
 
