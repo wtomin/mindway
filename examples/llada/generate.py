@@ -21,11 +21,12 @@ def add_gumbel_noise(logits, temperature):
     The Gumbel max is a method for sampling categorical distributions.
     According to arXiv:2409.02908, for MDM, low-precision Gumbel Max improves perplexity score but reduces generation quality.
     Thus, we use float64.
+    MindSpore uses float32 for better inference speed
     """
     if temperature == 0:
         return logits
-    logits = logits.to(ms.float64)
-    noise = ops.rand_like(logits, dtype=ms.float64)
+    logits = logits.to(ms.float32)
+    noise = ops.rand_like(logits, dtype=ms.float32)
     gumbel_noise = (-ops.log(noise)) ** temperature
     return ops.exp(logits) / gumbel_noise
 
@@ -109,7 +110,7 @@ def generate(
             x0 = ops.argmax(logits_with_noise, dim=-1)  # b, l
 
             if remasking == "low_confidence":
-                p = ops.softmax(logits.to(ms.float64), axis=-1)
+                p = ops.softmax(logits.to(ms.float32), axis=-1)
                 x0_p = ops.squeeze(mint.gather(p, dim=-1, index=ops.unsqueeze(x0, -1)), -1)  # b, l
             elif remasking == "random":
                 x0_p = ops.rand((x0.shape[0], x0.shape[1]))
