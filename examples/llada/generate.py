@@ -8,6 +8,7 @@ import mindspore as ms
 import mindspore.ops as ops
 from mindspore import Tensor, mint
 
+ms.set_context(mode=ms.PYNATIVE_MODE)
 # TODO: remove in future when mindway is ready for install
 __dir__ = os.path.dirname(os.path.abspath(__file__))
 mindway_lib_path = os.path.abspath(os.path.join(__dir__, "../../"))
