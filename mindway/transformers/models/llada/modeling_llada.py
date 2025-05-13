@@ -20,6 +20,13 @@ from mindway.transformers import MSPreTrainedModel
 from mindway.transformers.cache_utils import Cache
 from mindway.transformers.modeling_outputs import CausalLMOutputWithPast
 from mindway.transformers.models.auto import AutoModel
+from mindway.transformers.utils import is_flash_attn_2_available
+from mindway.utils.version_control import check_valid_flash_attention
+
+FLASH_IS_AVAILABLE = is_flash_attn_2_available and check_valid_flash_attention()
+
+if FLASH_IS_AVAILABLE:
+    from mindway.models.modules.flash_attention import MSFlashAttention
 
 from .configuration_llada import (
     ActivationCheckpointingStrategy,
@@ -590,9 +597,7 @@ class LLaDABlock(nn.Cell):
         self.flash_attn_func = None
         if config.flash_attention:
             try:
-                from flash_attn import flash_attn_func  # type: ignore
-
-                self.flash_attn_func = flash_attn_func
+                self.flash_attn_func = MSFlashAttention
             except ModuleNotFoundError:
                 pass
 
@@ -639,10 +644,17 @@ class LLaDABlock(nn.Cell):
         attention mask if passed, and applying dropout if a probability greater than 0.0 is specified.
         """
         if self.flash_attn_func is not None and attn_mask is None:
+            # q shape (B N S D)
+            num_heads, head_dim = q.shape[1], q.shape[-1]
             r = self.flash_attn_func(
-                q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2), dropout_p=dropout_p, causal=False
-            )
-            return r.transpose(1, 2)
+                head_dim=head_dim,
+                head_num=num_heads,
+                input_layout="BNSD",
+                dtype=ms.float16,
+                attention_dropout=dropout_p,
+            )(q, k, v)
+
+            return r
         else:
             # sdpa doesn't support GQA, so we're doing this
             assert k.shape[1] == v.shape[1]
